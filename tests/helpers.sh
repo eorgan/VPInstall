@@ -35,7 +35,7 @@ assert_fails() { # command...
 
 assert_file_mode() { # mode path message
   local actual
-  actual=$(ls -l "$2" | cut -c1-10)
+  actual=$(ls -ld "$2" | cut -c1-10)
   case "$1" in
     600) [ "$actual" = "-rw-------" ] && _ok "$3" || { _notok "$3"; printf '       mode: %s\n' "$actual"; } ;;
     700) [ "$actual" = "drwx------" ] && _ok "$3" || { _notok "$3"; printf '       mode: %s\n' "$actual"; } ;;
