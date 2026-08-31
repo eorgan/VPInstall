@@ -1,11 +1,34 @@
 # VPInstall
 
-Instalador de VPS: prepara o servidor e sobe as stacks em Docker Swarm atrás do
-Traefik com TLS, a partir de um único domínio raiz e sem digitar senhas.
+Instalador de VPS: prepara os recursos do Docker Swarm e sobe as stacks atrás do
+Traefik com TLS, a partir de um único domínio raiz e sem você digitar senhas.
+Todas as credenciais são geradas pelo script e guardadas em `.env` (modo 600).
 
-## Uso
+**O que ele não faz:** não instala o Docker, não roda `docker swarm init`, não
+configura firewall e não faz backup. Ele assume um nó de Swarm já pronto.
 
-Numa máquina que já tenha Docker e Swarm ativos:
+## Pré-requisitos
+
+- Uma VPS Linux com **Docker instalado** e **Swarm ativo** (`docker swarm init`).
+- Rodar num nó **manager** — o script recusa nós worker.
+- Acesso ao daemon do Docker: ser `root` ou estar no grupo `docker`.
+- Portas **80** e **443** livres no host (o Traefik as publica em modo `host`).
+- Os utilitários `openssl`, `envsubst`, `sed` e `grep` no PATH.
+
+## 1. Aponte o DNS
+
+Crie estes registros **A** apontando para o IP da VPS, e espere propagar:
+
+| Registro | Aponta para |
+|---|---|
+| `portainer.<seu-domínio>` | IP da VPS |
+| `evo.<seu-domínio>` | IP da VPS |
+
+Faça isso **antes** de instalar. O Let's Encrypt valida por desafio HTTP: se o
+nome ainda não resolve, o certificado não é emitido e cada tentativa falha
+consome a cota de falhas de validação.
+
+## 2. Instale
 
 ```bash
 git clone https://github.com/eorgan/VPInstall.git
@@ -13,45 +36,77 @@ cd VPInstall
 ./install.sh --domain exemplo.com.br --email voce@exemplo.com.br
 ```
 
-O script gera todas as credenciais, guarda em `.env` (modo 600) e implanta as
-stacks na ordem de dependência. Rodar de novo é seguro: os segredos existentes
-são reaproveitados, então este é também o caminho de atualização.
+O script gera os segredos, cria a rede e os volumes, renderiza os composes em
+`dist/` (modo 700) e implanta as stacks na ordem de dependência, esperando cada
+uma convergir antes da seguinte.
 
-Para ver o que seria feito, sem tocar no cluster:
+Se você omitir `--domain` ou `--email`, ele pergunta. Depois da primeira
+execução os dois ficam salvos em `.env` e não são mais pedidos.
+
+Para ver o que aconteceria, sem tocar no cluster nem exigir Docker:
 
 ```bash
 ./install.sh --dry-run --domain exemplo.com.br --email voce@exemplo.com.br
 ```
 
+## 3. Confira e acesse
+
+```bash
+docker stack ls                        # as 5 stacks devem aparecer
+docker service ls                      # réplicas em 1/1
+docker service logs -f traefik_traefik # acompanhar a emissão dos certificados
+```
+
+- **Portainer** — `https://portainer.<domínio>`. O primeiro acesso é onde você
+  cria o usuário admin; faça isso logo depois do deploy.
+- **Evolution API** — `https://evo.<domínio>`. Autentique com o header
+  `apikey`, cujo valor é o `EVOLUTION_API_KEY` do seu `.env`.
+- **PostgreSQL e Redis** não têm endereço público: são acessíveis só de dentro
+  do overlay, pelos nomes `postgres` e `redis`.
+
+## Atualizar
+
+Rode `./install.sh` de novo. É seguro: os segredos já presentes em `.env` são
+reaproveitados (regenerá-los quebraria o acesso ao banco ao vivo), as imagens
+são reresolvidas e serviços removidos das stacks são podados.
+
 ## Stacks
 
-| Stack | Host | Tier |
-|---|---|---|
-| Traefik | — | 10 |
-| Portainer | `portainer.<domínio>` | 10 |
-| PostgreSQL (pgvector) | — | 20 |
-| Redis | — | 20 |
-| Evolution API | `evo.<domínio>` | 30 |
+| Stack | O que é | Endereço | Tier |
+|---|---|---|---|
+| Traefik | Proxy reverso, TLS automático via Let's Encrypt | — | 10 |
+| Portainer | Painel web para gerenciar o Swarm | `portainer.<domínio>` | 10 |
+| PostgreSQL | Banco relacional, imagem `pgvector` | interno | 20 |
+| Redis | Cache em memória | interno | 20 |
+| Evolution API | API de WhatsApp | `evo.<domínio>` | 30 |
 
-Aponte os registros DNS para o servidor **antes** de rodar, senão o Let's
-Encrypt não consegue emitir os certificados.
+**Tier** é a ordem de implantação: menor primeiro. As stacks de tier 30 esperam
+o PostgreSQL aceitar conexões antes de subir.
 
 ## Segurança
 
-- **Atualizações.** Rodar `./install.sh` de novo é seguro: os segredos existentes
-  em `.env` são reaproveitados. Regenerá-los quebraria o acesso ao banco ao vivo.
-
 - **Arquivo `.env`.** Contém todas as credenciais geradas, é criado com modo 600
-  e nunca deve ser commitado (é ignorado por padrão em `.gitignore`).
+  e nunca deve ser commitado (já está no `.gitignore`, junto com `dist/`).
 
 - **Portas do banco de dados.** PostgreSQL e Redis não publicam portas
-  deliberadamente — são acessíveis apenas pela rede interna do overlay. Observe
-  que `ufw` não bloqueia portas publicadas por Docker — Swarm insere as regras
-  DNAT antes de `ufw` — então não publicar é a proteção real.
+  deliberadamente. Observe que `ufw` não bloqueia portas publicadas por Docker
+  — o Swarm insere as regras DNAT antes do `ufw` — então não publicar é a
+  proteção real, não a regra de firewall.
 
-- **DNS e Let's Encrypt.** Os registros DNS devem apontar para o servidor antes
-  da primeira execução, senão Let's Encrypt não consegue emitir os certificados
-  e fica com rate limit em tentativas falhadas.
+- **Rate limit do Let's Encrypt.** Tentativas falhas contam contra a cota. Se o
+  DNS ainda não propagou, use `--dry-run` até estar pronto, em vez de tentar o
+  deploy repetidamente.
+
+## Se der errado
+
+| Mensagem | O que fazer |
+|---|---|
+| `cannot talk to the Docker daemon` | Rode como `root` ou entre no grupo `docker` (`usermod -aG docker $USER`, depois relogue). |
+| `Docker Swarm is not active on this node` | `docker swarm init` (o VPInstall não faz isso por você). |
+| `this node is a swarm worker, not a manager` | Rode num manager; veja quais são com `docker node ls`. |
+| `missing required command(s): ...` | Instale o que faltou — em Debian/Ubuntu, `envsubst` vem no pacote `gettext-base`. |
+| Certificado não emite | Confirme que o nome resolve para o IP da VPS e que as portas 80/443 chegam nele; veja `docker service logs traefik_traefik`. |
+| Portainer diz que a instância expirou | A janela de criação do admin fechou. Reinicie o serviço: `docker service update --force portainer_portainer`. |
 
 ## Adicionar uma stack
 
@@ -72,8 +127,11 @@ STACK_SECRETS="SEGREDO1 SEGREDO2"
 STACK_VOLUMES="volume1 volume2"
 ```
 
-Os campos `STACK_SUBDOMAIN` e `STACK_SECRETS` podem estar vazios. O
-`stack_pre_deploy` é opcional.
+Os segredos listados em `STACK_SECRETS` passam a ser gerados automaticamente e
+só eles ficam disponíveis para substituição no compose. Os campos
+`STACK_SUBDOMAIN` e `STACK_SECRETS` podem estar vazios, e `stack_pre_deploy` —
+usado, por exemplo, para criar um papel e um banco no PostgreSQL antes do
+deploy — é opcional.
 
 ## Testes
 
