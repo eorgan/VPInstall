@@ -50,10 +50,25 @@ export PATH="$orig_path"
 
 # Test Finding 3: render_validate does not leak secrets in stderr
 export SECRET_PASS="SUPERSECRET123"
-printf 'uri: postgresql://user:${SECRET_PASS}@host/${TYPO_VAR}\n' > "$tmp/secret.yml"
-out=$( (render_validate "$tmp/secret.yml") 2>&1 || true )
-assert_contains "$out" "TYPO_VAR" "render_validate reports unresolved variable name"
-assert_not_contains "$out" "SUPERSECRET123" "render_validate does not leak secret value"
+export TYPO_VAR="this_is_unused"
+printf 'uri: postgresql://user:${SECRET_PASS}@host/${TYPO_VAR}\n' > "$tmp/secret_template.yml"
+render_file "$tmp/secret_template.yml" "$tmp/secret_rendered.yml" "$(render_varlist SECRET_PASS)"
+got=$(cat "$tmp/secret_rendered.yml")
+assert_contains "$got" "SUPERSECRET123" "render_file substitutes the secret value"
+assert_contains "$got" "\${TYPO_VAR}" "render_file leaves unresolved variable untouched"
+out=$( (render_validate "$tmp/secret_rendered.yml") 2>&1 || true )
+assert_contains "$out" "TYPO_VAR" "render_validate reports the unresolved variable name"
+assert_not_contains "$out" "SUPERSECRET123" "render_validate does not leak the secret value to stderr"
+
+# Test new breakage: render_validate must not crash on non-identifier placeholders
+printf 'positional: ${1}\nempty: ${}\n' > "$tmp/non_identifier.yml"
+out=$( (render_validate "$tmp/non_identifier.yml") 2>&1 || true )
+assert_contains "$out" "not a simple" "render_validate reports non-identifier placeholder"
+( render_validate "$tmp/non_identifier.yml" ) >/dev/null 2>&1 && rc=0 || rc=$?
+assert_eq "1" "$rc" "render_validate returns 1 for non-identifier placeholders"
+# Verify it doesn't crash an unguarded caller
+( render_validate "$tmp/non_identifier.yml" || true ) >/dev/null 2>&1 && rc=0 || rc=$?
+assert_eq "0" "$rc" "render_validate with non-identifier placeholder returns 1 without killing guarded caller"
 
 rm -rf "$tmp"
 printf '%s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"

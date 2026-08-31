@@ -21,13 +21,18 @@ render_file() { # src dst allowlist
 }
 
 render_validate() { # path
-  local f="$1" hits lineno var
+  local f="$1" hits lineno rest vars var
   hits=$(grep -n '\${' "$f" || true)
   if [ -n "$hits" ]; then
     while IFS=: read -r lineno rest; do
-      grep -o '\${[A-Za-z_][A-Za-z0-9_]*}' <<< "$rest" | while read -r var; do
-        printf '%s:%s: unresolved %s\n' "$f" "$lineno" "$var" >&2
-      done
+      vars=$(printf '%s\n' "$rest" | grep -o '\${[A-Za-z_][A-Za-z0-9_]*}' || true)
+      if [ -n "$vars" ]; then
+        printf '%s\n' "$vars" | while read -r var; do
+          printf '%s:%s: unresolved %s\n' "$f" "$lineno" "$var" >&2
+        done
+      else
+        printf '%s:%s: unresolved placeholder (not a simple ${NAME})\n' "$f" "$lineno" >&2
+      fi
     done <<< "$hits"
     return 1
   fi
