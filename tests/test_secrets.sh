@@ -37,6 +37,30 @@ assert_eq "$first" "$(env_get "$envfile" PG_PASSWORD)" "env_ensure_secret preser
 
 assert_eq "" "$(env_get "$envfile" NEVER_SET)" "env_get returns empty for a missing key"
 
+# Test: env_set maintains mode 600 even with ambient umask 022
+# This test spawns a separate process to verify the umask fix
+(umask 022; env_set "$envfile" TEST_KEY "test_value")
+assert_file_mode 600 "$envfile" "env_set maintains mode 600 with umask 022"
+
+# Test: gen_secret fails if openssl fails
+# Use a mock openssl that returns invalid output
+tmp_mock=$(make_tmpdir)
+mkdir -p "$tmp_mock/bin"
+# Create a fake openssl that fails
+cat > "$tmp_mock/bin/openssl" << 'EOFMOCK'
+#!/bin/bash
+exit 1
+EOFMOCK
+chmod +x "$tmp_mock/bin/openssl"
+_failed=0
+( export PATH="$tmp_mock/bin:$PATH"; gen_secret >/dev/null 2>&1 ) || _failed=1
+rm -rf "$tmp_mock"
+if [ "$_failed" -eq 1 ]; then
+  _ok "gen_secret dies when openssl fails"
+else
+  _notok "gen_secret should die when openssl fails"
+fi
+
 rm -rf "$tmp"
 printf '%s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [ "$TESTS_FAILED" -eq 0 ]

@@ -3,7 +3,18 @@
 
 # Hex, not base64: these values are embedded in postgresql:// URIs and
 # base64's "/" and "+" silently corrupt the DSN.
-gen_secret() { openssl rand -hex 32; }
+gen_secret() {
+  local s
+  s=$(openssl rand -hex 32) || die "openssl rand failed"
+  # Verify we got 64 hex characters
+  case "${#s}" in
+    64) case "$s" in
+          *[!0-9a-f]*) die "gen_secret: openssl produced non-hex output" ;;
+          *) printf '%s' "$s" ;;
+        esac ;;
+    *) die "gen_secret: openssl produced ${#s} bytes, expected 64" ;;
+  esac
+}
 
 env_init() {
   local f="$1"
@@ -15,12 +26,13 @@ env_init() {
 }
 
 env_load() {
-  local f="$1"
+  local f="$1" _had_a
   [ -e "$f" ] || return 0
+  case "$-" in *a*) _had_a=1 ;; *) _had_a=0 ;; esac
   set -a
   # shellcheck disable=SC1090
   . "$f"
-  set +a
+  [ "$_had_a" = "1" ] || set +a
 }
 
 env_get() {
@@ -34,9 +46,21 @@ env_set() {
   local f="$1" k="$2" v="$3" tmp
   env_init "$f"
   tmp="${f}.tmp.$$"
-  grep -v "^${k}=" "$f" > "$tmp" 2>/dev/null || : > "$tmp"
-  printf '%s=%s\n' "$k" "$v" >> "$tmp"
-  mv "$tmp" "$f"
+  # Create temp file with secure permissions before writing
+  ( umask 077; : > "$tmp" ) || die "failed to create $tmp"
+  # Write content to temp file, cleanup on error
+  if ! { grep -v "^${k}=" "$f" > "$tmp" 2>/dev/null || : > "$tmp"; }; then
+    rm -f "$tmp"
+    die "failed to write $f"
+  fi
+  if ! printf '%s=%s\n' "$k" "$v" >> "$tmp"; then
+    rm -f "$tmp"
+    die "failed to write $f"
+  fi
+  if ! mv "$tmp" "$f"; then
+    rm -f "$tmp"
+    die "failed to write $f"
+  fi
   chmod 600 "$f"
 }
 
