@@ -31,6 +31,30 @@ printf 'clean: yes\n' > "$tmp/clean.yml"
 render_validate "$tmp/clean.yml" >/dev/null 2>&1 && rc=0 || rc=$?
 assert_eq "0" "$rc" "render_validate passes a fully resolved file"
 
+# Test Finding 1: render_validate returns 1 (not exit 1) and caller can guard it
+( render_validate "$tmp/out/out.yml" || true ) >/dev/null 2>&1 && rc=0 || rc=$?
+assert_eq "0" "$rc" "render_validate returns 1 without killing guarded caller"
+
+# Test Finding 2: render_file fails and cleans up if envsubst fails
+mkdir -p "$tmp/bin"
+printf '#!/bin/bash\nexit 1\n' > "$tmp/bin/envsubst"
+chmod +x "$tmp/bin/envsubst"
+orig_path="$PATH"
+export PATH="$tmp/bin:$PATH"
+printf 'test: ${DOMAIN}\n' > "$tmp/envsubst_fail.yml"
+( render_file "$tmp/envsubst_fail.yml" "$tmp/out2/out.yml" "$(render_varlist DOMAIN)" ) >/dev/null 2>&1 && rc=0 || rc=$?
+assert_eq "1" "$rc" "render_file returns 1 when envsubst fails"
+[ ! -e "$tmp/out2/out.yml" ] || die "render_file left a file after envsubst failure"
+_ok "render_file cleans up on envsubst failure"
+export PATH="$orig_path"
+
+# Test Finding 3: render_validate does not leak secrets in stderr
+export SECRET_PASS="SUPERSECRET123"
+printf 'uri: postgresql://user:${SECRET_PASS}@host/${TYPO_VAR}\n' > "$tmp/secret.yml"
+out=$( (render_validate "$tmp/secret.yml") 2>&1 || true )
+assert_contains "$out" "TYPO_VAR" "render_validate reports unresolved variable name"
+assert_not_contains "$out" "SUPERSECRET123" "render_validate does not leak secret value"
+
 rm -rf "$tmp"
 printf '%s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [ "$TESTS_FAILED" -eq 0 ]
