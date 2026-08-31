@@ -42,12 +42,19 @@ env_get() {
   sed -n "s/^${k}=//p" "$f" | tail -1
 }
 
+_env_mktemp() {
+  # Create temp file at mode 600, independently testable
+  local t="$1"
+  ( umask 077; : > "$t" ) || die "failed to create $t"
+  printf '%s' "$t"
+}
+
 env_set() {
   local f="$1" k="$2" v="$3" tmp
   env_init "$f"
   tmp="${f}.tmp.$$"
   # Create temp file with secure permissions before writing
-  ( umask 077; : > "$tmp" ) || die "failed to create $tmp"
+  _env_mktemp "$tmp" >/dev/null
   # Write content to temp file, cleanup on error
   if ! { grep -v "^${k}=" "$f" > "$tmp" 2>/dev/null || : > "$tmp"; }; then
     rm -f "$tmp"
@@ -65,8 +72,10 @@ env_set() {
 }
 
 env_ensure_secret() {
-  local f="$1" k="$2" current
+  local f="$1" k="$2" current value
   current=$(env_get "$f" "$k")
   [ -n "$current" ] && return 0
-  env_set "$f" "$k" "$(gen_secret)"
+  value=$(gen_secret) || die "failed to generate a secret for $k"
+  [ -n "$value" ] || die "failed to generate a secret for $k"
+  env_set "$f" "$k" "$value"
 }

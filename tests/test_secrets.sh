@@ -37,29 +37,48 @@ assert_eq "$first" "$(env_get "$envfile" PG_PASSWORD)" "env_ensure_secret preser
 
 assert_eq "" "$(env_get "$envfile" NEVER_SET)" "env_get returns empty for a missing key"
 
-# Test: env_set maintains mode 600 even with ambient umask 022
-# This test spawns a separate process to verify the umask fix
-(umask 022; env_set "$envfile" TEST_KEY "test_value")
-assert_file_mode 600 "$envfile" "env_set maintains mode 600 with umask 022"
+# Test: _env_mktemp creates file at mode 600 even with umask 022
+# This directly tests the temp file creation, not just the final result
+tmp_mktemp=$(make_tmpdir)
+tmp_file="$tmp_mktemp/test.tmp"
+(
+  umask 022
+  _env_mktemp "$tmp_file" >/dev/null
+)
+assert_file_mode 600 "$tmp_file" "_env_mktemp creates file at mode 600 with umask 022"
+rm -rf "$tmp_mktemp"
 
-# Test: gen_secret fails if openssl fails
-# Use a mock openssl that returns invalid output
+# Test: env_set cleans up temp files on success
+env_set "$envfile" CLEANUP_TEST "value"
+# Check that no .tmp.* files remain
+tmp_count=$(find "$tmp" -name ".env.tmp.*" 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "0" "$tmp_count" "env_set cleans up temp files after success"
+
+# Test: env_ensure_secret fails and doesn't write when openssl fails
+# Use a mock openssl that fails
 tmp_mock=$(make_tmpdir)
 mkdir -p "$tmp_mock/bin"
-# Create a fake openssl that fails
 cat > "$tmp_mock/bin/openssl" << 'EOFMOCK'
 #!/bin/bash
 exit 1
 EOFMOCK
 chmod +x "$tmp_mock/bin/openssl"
+envfile_bad="$tmp_mock/.env"
+env_init "$envfile_bad"
 _failed=0
-( export PATH="$tmp_mock/bin:$PATH"; gen_secret >/dev/null 2>&1 ) || _failed=1
-rm -rf "$tmp_mock"
+(
+  export PATH="$tmp_mock/bin:$PATH"
+  env_ensure_secret "$envfile_bad" BROKEN_SECRET >/dev/null 2>&1
+) || _failed=1
 if [ "$_failed" -eq 1 ]; then
-  _ok "gen_secret dies when openssl fails"
+  _ok "env_ensure_secret fails when openssl fails"
 else
-  _notok "gen_secret should die when openssl fails"
+  _notok "env_ensure_secret should fail when openssl fails"
 fi
+# Verify the key was NOT written
+broken_val=$(env_get "$envfile_bad" BROKEN_SECRET)
+assert_eq "" "$broken_val" "env_ensure_secret does not write empty secret on openssl failure"
+rm -rf "$tmp_mock"
 
 rm -rf "$tmp"
 printf '%s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
