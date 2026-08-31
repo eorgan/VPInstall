@@ -44,6 +44,22 @@ assert_eq "" "$leftovers" "no hardcoded domains remain in the templates"
 leftovers=$(grep -rnE "PASSWORD=[a-f0-9]{16}|API_KEY=[a-f0-9]{16}" stacks/ || true)
 assert_eq "" "$leftovers" "no hardcoded secrets remain in the templates"
 
+# --- fix round 2, finding 7 (important): STACK_SUBDOMAIN in the manifest is
+# used only for the closing DNS summary; the router rules hardcode their own
+# subdomain in the YAML template. Nothing keeps the two in sync, so this test
+# catches divergence directly: for every stack with a non-empty
+# STACK_SUBDOMAIN, the rendered YAML must contain a Host() rule for
+# <STACK_SUBDOMAIN>.<domain>. (Templates are intentionally left as-is; see
+# the fix-wave notes — this test is the guardrail, not a restructuring.)
+for m in $(manifest_list); do
+  manifest_load "$m"
+  if [ -n "$STACK_SUBDOMAIN" ]; then
+    rendered=$(cat "$tmp/$STACK_NAME.yml")
+    assert_contains "$rendered" "Host(\`$STACK_SUBDOMAIN.$DOMAIN\`)" \
+      "$STACK_NAME: rendered Host() rule matches manifest STACK_SUBDOMAIN ($STACK_SUBDOMAIN)"
+  fi
+done
+
 rm -rf "$tmp"
 printf '%s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [ "$TESTS_FAILED" -eq 0 ]

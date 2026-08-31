@@ -39,5 +39,38 @@ assert_contains "$volumes" "evolution_instances" "manifest_all_volumes includes 
 out=$( (manifest_load /nope/missing.stack) 2>&1 || true )
 assert_contains "$out" "missing.stack" "manifest_load dies on a missing manifest"
 
+# --- fix round 2, finding 8 (minor): a manifest missing STACK_TIER must die
+# clearly, not fail deep inside install.sh's `[ "$STACK_TIER" -ge 30 ]` with
+# "integer expression expected" while still deploying the stack and exiting 0.
+tmp=$(make_tmpdir)
+cat > "$tmp/no-tier.stack" <<'EOF'
+STACK_NAME="no-tier"
+STACK_FILE="stacks/db/redis.yml"
+STACK_SUBDOMAIN=""
+STACK_SECRETS=""
+STACK_VOLUMES=""
+EOF
+out=$( (manifest_load "$tmp/no-tier.stack") 2>&1 ) && rc=0 || rc=$?
+assert_eq "1" "$rc" "manifest_load dies on a manifest with no STACK_TIER"
+assert_contains "$out" "STACK_TIER" "missing-STACK_TIER error names the field"
+assert_not_contains "$out" "integer expression expected" \
+  "missing-STACK_TIER error is a clear die(), not the raw '[: : integer expression expected'"
+rm -rf "$tmp"
+
+# A non-integer STACK_TIER must be rejected the same way.
+tmp=$(make_tmpdir)
+cat > "$tmp/bad-tier.stack" <<'EOF'
+STACK_NAME="bad-tier"
+STACK_FILE="stacks/db/redis.yml"
+STACK_TIER="abc"
+STACK_SUBDOMAIN=""
+STACK_SECRETS=""
+STACK_VOLUMES=""
+EOF
+out=$( (manifest_load "$tmp/bad-tier.stack") 2>&1 ) && rc=0 || rc=$?
+assert_eq "1" "$rc" "manifest_load dies on a non-integer STACK_TIER"
+assert_contains "$out" "STACK_TIER" "non-integer STACK_TIER error names the field"
+rm -rf "$tmp"
+
 printf '%s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [ "$TESTS_FAILED" -eq 0 ]

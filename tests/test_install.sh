@@ -107,6 +107,83 @@ fi
 assert_eq "" "$domain6" "--dry-run is never taken as the value of --domain"
 rm -rf "$tmp6"
 
+# --- fix round 2, finding 1 (critical): `docker stack deploy` defaults to
+# --detach=true, which returns 0 even when a service can never be scheduled
+# (e.g. something else already holds :80/:443). install.sh must pass
+# --detach=false so a convergence failure surfaces as a non-zero exit.
+
+tmp7=$(make_tmpdir)
+env7="$tmp7/.env"
+deploy_lines=$(VPINSTALL_ENV_FILE="$env7" VPINSTALL_DIST="$tmp7/dist" \
+  ./install.sh --dry-run --domain exemplo.com.br --email voce@exemplo.com.br 2>&1 \
+  | grep 'docker stack deploy')
+[ -n "$deploy_lines" ] && rc=0 || rc=1
+assert_eq "0" "$rc" "dry-run prints at least one docker stack deploy command"
+line_count=$(printf '%s\n' "$deploy_lines" | wc -l | tr -d ' ')
+detach_count=$(printf '%s\n' "$deploy_lines" | grep -c -- '--detach=false' || true)
+assert_eq "$line_count" "$detach_count" "every docker stack deploy invocation passes --detach=false"
+rm -rf "$tmp7"
+
+# --- fix round 2, finding 2 (important): dist/*.yml must be written 600 on
+# EVERY run, not just the first (where umask 077 only applies by accident,
+# because env_init's `if [ ! -e "$f" ]` branch that sets it is skipped once
+# .env already exists). Reproduce the real update path: .env pre-exists
+# (as if copied in, or left from an earlier install), dist/ does not, and the
+# ambient umask is the permissive login default (022).
+
+tmp8=$(make_tmpdir)
+env8="$tmp8/.env"
+touch "$env8"; chmod 600 "$env8"
+{
+  printf 'DOMAIN=exemplo.com.br\n'
+  printf 'ACME_EMAIL=voce@exemplo.com.br\n'
+  printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)"
+  printf 'EVOLUTION_API_KEY=%s\n' "$(openssl rand -hex 32)"
+  printf 'EVOLUTION_DB_PASSWORD=%s\n' "$(openssl rand -hex 32)"
+} >> "$env8"
+(
+  umask 022
+  VPINSTALL_ENV_FILE="$env8" VPINSTALL_DIST="$tmp8/dist" ./install.sh --dry-run >/dev/null 2>&1
+  VPINSTALL_ENV_FILE="$env8" VPINSTALL_DIST="$tmp8/dist" ./install.sh --dry-run >/dev/null 2>&1
+)
+all_600=1
+for f in "$tmp8/dist"/*.yml; do
+  mode=$(ls -ld "$f" | cut -c1-10)
+  [ "$mode" = "-rw-------" ] || { all_600=0; printf '       %s is %s (want -rw-------)\n' "$f" "$mode"; }
+done
+assert_eq "1" "$all_600" "every dist/*.yml is mode 600 on a re-run against a pre-existing .env, ambient umask 022"
+rm -rf "$tmp8"
+
+# --- fix round 2, finding 4 (important): .env.example must not ship a
+# working DOMAIN/ACME_EMAIL, or `cp .env.example .env && ./install.sh` would
+# silently deploy against a fake domain against PRODUCTION Let's Encrypt.
+
+example_domain=$(sed -n 's/^DOMAIN=//p' .env.example)
+example_email=$(sed -n 's/^ACME_EMAIL=//p' .env.example)
+assert_eq "" "$example_domain" ".env.example does not set an active DOMAIN"
+assert_eq "" "$example_email" ".env.example does not set an active ACME_EMAIL"
+
+tmp9=$(make_tmpdir)
+cp .env.example "$tmp9/.env"
+chmod 600 "$tmp9/.env"
+out9=$(VPINSTALL_ENV_FILE="$tmp9/.env" VPINSTALL_DIST="$tmp9/dist" \
+  ./install.sh --dry-run </dev/null 2>&1) && rc=0 || rc=$?
+assert_eq "1" "$rc" "a copied .env.example with no --domain/--email and no stdin fails rather than deploying"
+assert_contains "$out9" "Root domain" "a copied .env.example still prompts for DOMAIN instead of using a placeholder"
+rm -rf "$tmp9"
+
+# --- fix round 2, finding 9 (minor): a non-interactive run with no --domain
+# and no stdin must die with a clear message, not exit 1 silently (errexit
+# on the failing `read`).
+
+tmp10=$(make_tmpdir)
+env10="$tmp10/.env"
+out10=$(VPINSTALL_ENV_FILE="$env10" VPINSTALL_DIST="$tmp10/dist" \
+  ./install.sh --dry-run </dev/null 2>&1) && rc=0 || rc=$?
+assert_eq "1" "$rc" "no domain, no stdin: install.sh exits non-zero"
+assert_contains "$out10" "no domain supplied" "no domain, no stdin: install.sh explains the failure rather than dying silently"
+rm -rf "$tmp10"
+
 rm -rf "$tmp"
 printf '%s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [ "$TESTS_FAILED" -eq 0 ]

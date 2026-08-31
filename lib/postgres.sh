@@ -17,7 +17,10 @@ pg_container_id() {
 }
 
 pg_wait_ready() {
-  local timeout="${1:-120}" waited=0 cid
+  # 300s by default: a first run must pull a several-hundred-MB postgres image
+  # and run initdb while four other images pull concurrently, which routinely
+  # exceeds 120s. Override with VPINSTALL_PG_TIMEOUT for slower hosts/links.
+  local timeout="${1:-${VPINSTALL_PG_TIMEOUT:-300}}" waited=0 cid
   is_dry_run && return 0
 
   log_info "waiting for PostgreSQL to accept connections"
@@ -30,7 +33,7 @@ pg_wait_ready() {
     sleep 3
     waited=$((waited + 3))
   done
-  die "PostgreSQL did not become ready within ${timeout}s. Check: docker service logs <stack>_postgres"
+  die "PostgreSQL did not become ready within ${timeout}s. Check: docker service logs postgres_postgres"
 }
 
 # Idempotent: creates the role when absent, and always resets the password so

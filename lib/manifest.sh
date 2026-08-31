@@ -24,6 +24,9 @@ manifest_load() {
 
   [ -n "$STACK_NAME" ] || die "manifest $f does not set STACK_NAME"
   [ -n "$STACK_FILE" ] || die "manifest $f does not set STACK_FILE"
+  case "$STACK_TIER" in
+    ''|*[!0-9]*) die "manifest $f: STACK_TIER must be a non-empty integer, got: '$STACK_TIER'" ;;
+  esac
 }
 
 _manifest_collect() { # field name

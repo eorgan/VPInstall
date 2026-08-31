@@ -19,8 +19,10 @@ gen_secret() {
 env_init() {
   local f="$1"
   if [ ! -e "$f" ]; then
-    umask 077
-    : > "$f"
+    # Subshelled so umask 077 never leaks into the caller's shell (install.sh
+    # itself, or anything that sources this file): without it, an ambient
+    # umask 022 would silently persist through the rest of the process.
+    ( umask 077; : > "$f" ) || die "failed to create $f"
   fi
   chmod 600 "$f"
 }

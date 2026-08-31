@@ -39,5 +39,35 @@ sql=$(pg_db_sql "db'name" "owner'name")
 assert_contains "$sql" "db''name" "pg_db_sql escapes embedded single quotes in database"
 assert_contains "$sql" "owner''name" "pg_db_sql escapes embedded single quotes in owner"
 
+# --- fix round 2, finding 6 (important): the default timeout (120s) is
+# marginal on a first run, where Postgres must pull a several-hundred-MB
+# image and run initdb while four other images pull concurrently; it must be
+# raised to 300s, overridable via VPINSTALL_PG_TIMEOUT, and the failure
+# message must name the real service (postgres_postgres), not a literal
+# "<stack>" placeholder.
+assert_contains "$(cat lib/postgres.sh)" 'VPINSTALL_PG_TIMEOUT:-300' \
+  "pg_wait_ready defaults to 300s, overridable via VPINSTALL_PG_TIMEOUT"
+
+# Fake docker: no postgres container is ever found, so pg_wait_ready always
+# times out. VPINSTALL_PG_TIMEOUT=0 makes that happen immediately (no arg
+# is passed, so the function must fall back to the env var), which both
+# proves the override plumbing works and keeps this test fast.
+fakebin=$(make_tmpdir)
+cat > "$fakebin/docker" <<'EOF'
+#!/bin/bash
+[ "$1" = "ps" ] && exit 0
+exit 1
+EOF
+chmod +x "$fakebin/docker"
+
+out=$(PATH="$fakebin:$PATH" VPINSTALL_PG_TIMEOUT=0 bash -c \
+  '. lib/common.sh; . lib/postgres.sh; DRY_RUN=0; pg_wait_ready' 2>&1) && rc=0 || rc=$?
+assert_eq "1" "$rc" "pg_wait_ready times out and fails when postgres never becomes ready"
+assert_contains "$out" "docker service logs postgres_postgres" \
+  "pg_wait_ready timeout message names the real service (postgres_postgres)"
+assert_not_contains "$out" "<stack>_postgres" \
+  "pg_wait_ready timeout message no longer contains the literal <stack> placeholder"
+rm -rf "$fakebin"
+
 printf '%s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [ "$TESTS_FAILED" -eq 0 ]
