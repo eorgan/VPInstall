@@ -1,57 +1,50 @@
+networks:
+  network_public:
+    external: true
+
+volumes:
+  volume_swarm_certificates:
+    external: true
+  volume_swarm_shared:
+    external: true
+
 services:
   traefik:
     image: traefik:v3.7.12
     command:
-      - "--api.dashboard=true"
-      - "--providers.swarm.endpoint=unix:///var/run/docker.sock"
-      - "--providers.swarm.exposedbydefault=false"
-      - "--providers.swarm.network=network_public"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
-      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
-      - "--entrypoints.websecure.address=:443"
-      - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge=true"
-      - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.letsencryptresolver.acme.email=${ACME_EMAIL}"
-      - "--certificatesresolvers.letsencryptresolver.acme.storage=/etc/traefik/letsencrypt/acme.json"
-      - "--log.level=INFO"
-      - "--log.format=common"
-      - "--log.filePath=/var/log/traefik/traefik.log"
-      - "--accesslog=true"
-      - "--accesslog.filepath=/var/log/traefik/access-log"
-    deploy:
-      placement:
-        constraints:
-          - node.role == manager
-      labels:
-        - "traefik.enable=true"
-        - "traefik.http.middlewares.redirect-https.redirectscheme.scheme=https"
-        - "traefik.http.middlewares.redirect-https.redirectscheme.permanent=true"
-        - "traefik.http.routers.http-catchall.rule=HostRegexp(`.+`)"
-        - "traefik.http.routers.http-catchall.entrypoints=web"
-        - "traefik.http.routers.http-catchall.middlewares=redirect-https@swarm"
-        - "traefik.http.routers.http-catchall.priority=1"
+      - --providers.swarm.endpoint=unix:///var/run/docker.sock
+      - --providers.swarm.exposedbydefault=false
+      - --providers.swarm.network=network_public
+      - --providers.swarm.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.web.http.redirections.entrypoint.permanent=true
+      - --certificatesresolvers.letsencryptresolver.acme.httpchallenge=true
+      - --certificatesresolvers.letsencryptresolver.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencryptresolver.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencryptresolver.acme.storage=/etc/traefik/letsencrypt/acme.json
+      - --log.level=INFO
     volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      - "vol_certificates:/etc/traefik/letsencrypt"
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - volume_swarm_certificates:/etc/traefik/letsencrypt
+      - volume_swarm_shared:/var/opt/traefik/shared
     networks:
       - network_public
     ports:
       - target: 80
         published: 80
+        protocol: tcp
         mode: host
       - target: 443
         published: 443
+        protocol: tcp
         mode: host
-volumes:
-  vol_shared:
-    external: true
-    name: volume_swarm_shared
-  vol_certificates:
-    external: true
-    name: volume_swarm_certificates
-networks:
-  network_public:
-    external: true
-    name: network_public
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - traefik.enable=true
+        - traefik.swarm.network=network_public
