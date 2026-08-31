@@ -1,0 +1,10 @@
+STACK_NAME="evolution"
+STACK_FILE="stacks/app/evolution-api.yml"
+STACK_TIER=30
+STACK_SUBDOMAIN="evo"
+STACK_SECRETS="EVOLUTION_API_KEY EVOLUTION_DB_PASSWORD"
+STACK_VOLUMES="evolution_instances evolution_store"
+
+stack_pre_deploy() {
+  pg_ensure_role_db evolution "$EVOLUTION_DB_PASSWORD"
+}

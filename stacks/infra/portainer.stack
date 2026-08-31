@@ -1,0 +1,6 @@
+STACK_NAME="portainer"
+STACK_FILE="stacks/infra/portainer.yml"
+STACK_TIER=10
+STACK_SUBDOMAIN="portainer"
+STACK_SECRETS=""
+STACK_VOLUMES="portainer_data"

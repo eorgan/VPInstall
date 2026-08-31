@@ -1,0 +1,6 @@
+STACK_NAME="traefik"
+STACK_FILE="stacks/infra/traefik.yml"
+STACK_TIER=10
+STACK_SUBDOMAIN=""
+STACK_SECRETS=""
+STACK_VOLUMES="volume_swarm_certificates volume_swarm_shared"
