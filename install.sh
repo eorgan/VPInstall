@@ -67,8 +67,14 @@ validate_email() { # email
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --domain)  ARG_DOMAIN="$2"; shift 2 ;;
-    --email)   ARG_EMAIL="$2";  shift 2 ;;
+    --domain)
+      [ $# -ge 2 ] || die "--domain requires a value"
+      case "$2" in -*) die "--domain requires a value, got: $2" ;; esac
+      ARG_DOMAIN="$2"; shift 2 ;;
+    --email)
+      [ $# -ge 2 ] || die "--email requires a value"
+      case "$2" in -*) die "--email requires a value, got: $2" ;; esac
+      ARG_EMAIL="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1;       shift ;;
     --help|-h) usage; exit 0 ;;
     *) usage; die "unknown option: $1" ;;

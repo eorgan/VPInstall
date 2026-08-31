@@ -20,6 +20,7 @@ assert_eq "exemplo.com.br" "$(grep '^DOMAIN=' "$env" | cut -d= -f2)" "dry run st
 [ -f "$tmp/dist/evolution.yml" ] && rc=0 || rc=1
 assert_eq "0" "$rc" "dry run renders every stack"
 assert_file_mode 600 "$env" ".env is mode 600"
+assert_file_mode 700 "$tmp/dist" "dist/ is mode 700"
 
 log=$(cat "$tmp/log1")
 assert_not_contains "$log" "$(grep '^POSTGRES_PASSWORD=' "$env" | cut -d= -f2)" "no secret is printed to the log"
@@ -80,6 +81,31 @@ VPINSTALL_ENV_FILE="$env4" VPINSTALL_DIST="$tmp4/dist" \
   && rc=0 || rc=$?
 assert_eq "0" "$rc" "valid domain and email are accepted"
 rm -rf "$tmp4"
+
+# --- fix round 1, finding 1: option-value parsing must not crash on a
+# missing value, and must not silently swallow the following flag as its
+# value (which would drop --dry-run and head toward a real deploy).
+
+tmp5=$(make_tmpdir)
+out5=$(./install.sh --domain 2>&1) && rc=0 || rc=$?
+assert_eq "1" "$rc" "--domain with no value exits non-zero"
+assert_contains "$out5" "--domain" "--domain-with-no-value error names --domain"
+assert_not_contains "$out5" "unbound variable" "--domain with no value fails cleanly, not with unbound variable"
+rm -rf "$tmp5"
+
+tmp6=$(make_tmpdir)
+env6="$tmp6/.env"
+VPINSTALL_ENV_FILE="$env6" VPINSTALL_DIST="$tmp6/dist" \
+  ./install.sh --domain --dry-run --email x@y.com </dev/null >"$tmp6/log" 2>&1 \
+  && rc=0 || rc=$?
+assert_eq "1" "$rc" "--domain --dry-run --email x@y.com is rejected rather than swallowing --dry-run"
+if [ -f "$env6" ]; then
+  domain6=$(grep '^DOMAIN=' "$env6" | cut -d= -f2 || true)
+else
+  domain6=""
+fi
+assert_eq "" "$domain6" "--dry-run is never taken as the value of --domain"
+rm -rf "$tmp6"
 
 rm -rf "$tmp"
 printf '%s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
