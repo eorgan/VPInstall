@@ -28,5 +28,16 @@ assert_contains "$out" "role" "pg_ensure_role_db rejects an empty role"
 out=$( (pg_ensure_role_db evolution "") 2>&1 || true )
 assert_contains "$out" "password" "pg_ensure_role_db rejects an empty password"
 
+sql=$(pg_role_sql "ev'il" "pa'ss")
+assert_contains "$sql" "ev''il" "pg_role_sql escapes embedded single quotes in role"
+assert_contains "$sql" "pa''ss" "pg_role_sql escapes embedded single quotes in password"
+
+sql=$(pg_role_sql "test" 'pass\word')
+assert_contains "$sql" 'pass\word' "pg_role_sql preserves backslashes in password"
+
+sql=$(pg_db_sql "db'name" "owner'name")
+assert_contains "$sql" "db''name" "pg_db_sql escapes embedded single quotes in database"
+assert_contains "$sql" "owner''name" "pg_db_sql escapes embedded single quotes in owner"
+
 printf '%s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [ "$TESTS_FAILED" -eq 0 ]

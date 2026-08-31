@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # PostgreSQL readiness and role/database bootstrap.
 
+# Escapes single quotes for SQL interpolation by doubling them (SQL standard).
+# bash 3.2 safe, no external tools beyond sed.
+_sql_quote() { # value -> value with ' doubled
+  local v="$1" out=""
+  out=$(printf '%s' "$v" | sed "s/'/''/g")
+  printf '%s' "$out"
+}
+
+# Note: assumes a single PostgreSQL container on this node. If adding multi-node
+# support or additional postgres services, this substring match must be tightened
+# (e.g., exact name or label filter).
 pg_container_id() {
   docker ps -q -f name=postgres 2>/dev/null | head -1
 }
@@ -25,22 +36,24 @@ pg_wait_ready() {
 # Idempotent: creates the role when absent, and always resets the password so
 # that .env and the server cannot drift apart.
 pg_role_sql() { # role password
+  local role="$(_sql_quote "$1")" password="$(_sql_quote "$2")"
   cat <<SQL
 DO \$\$
 BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$1') THEN
-    CREATE ROLE $1 LOGIN;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$role') THEN
+    CREATE ROLE $role LOGIN;
   END IF;
 END
 \$\$;
-ALTER ROLE $1 WITH PASSWORD '$2';
+ALTER ROLE $role WITH PASSWORD '$password';
 SQL
 }
 
 pg_db_sql() { # database owner
+  local database="$(_sql_quote "$1")" owner="$(_sql_quote "$2")"
   cat <<SQL
-SELECT 'CREATE DATABASE $1 OWNER $2'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$1')\gexec
+SELECT 'CREATE DATABASE $database OWNER $owner'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$database')\gexec
 SQL
 }
 
